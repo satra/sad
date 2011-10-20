@@ -1,42 +1,29 @@
-import numpy as np
-import os
+from tempfile import mkdtemp
 import sys
 
 import nipype.pipeline.engine as pe         # the workflow and node wrappers
 import nipype.interfaces.spm as spm
 import nipype.interfaces.matlab as mlab
 mlab.MatlabCommand.set_default_matlab_cmd("matlab -nodesktop -nosplash")
-mlab.MatlabCommand.set_default_paths('/software/spm8')
+mlab.MatlabCommand.set_default_paths('/software/spm8_4290')
 
-# prevent lengthy SPM output
-from nipype.utils import logger
-from nipype.utils.logger import fmlogger, iflogger
-fmlogger.setLevel(logger.logging.getLevelName('CRITICAL'))
-iflogger.setLevel(logger.logging.getLevelName('CRITICAL'))
 
-import nibabel as nib
+from cfutils import get_subject_data
 
-## INITIAL SETUP
-# original input file with test scores etc for every subject
-pdata = np.recfromcsv('/mindhive/gablab/sad/PY_STUDY_DIR/Block/volsurf/l2output/social/split_halves/regression/lsasDELTA/6mm/allsubs.csv',names=True)
-
-# put here either lsas_delta or lsas_post
-responsevar = pdata.lsas_pre - pdata.lsas_post
-
-group = pdata.classtype - 2
-lsas_pre = pdata.lsas_pre
-subject_num = len(pdata.subject)
-
-def do_spm(analdir, confiles):
+def do_spm(subjects, y, analdir=None, analname=None, run_workflow=True):
     """
     workflow function that does all spm analysis (2 sample t-test, estimate model, estimate contrasts, threshold image)
     
-    Parameters:
-    -----------
-    analdir: the output directory of everything the workflow creates
+    Parameters
+    ----------
+
+    subjects : list of subjects on whom to do regression
+    y : dependent variable corresponding to the list of subjects
     
-    confiles: the input 1level contrast files on which the group/2level analysis is performed
     """
+
+    confiles, pdata = get_subject_data(subjects)
+
     # MAKE COVARIATES
     # containes lsas_delta and lsas_pre for group2/3
     covariates_group2 = [[],[]]
@@ -47,21 +34,15 @@ def do_spm(analdir, confiles):
     # list of subject ids belonging to respective group
     group2 = []
     group3 = []
-    for con_file in confiles:
-        _, name = os.path.split(con_file)
-        # sid saves subject id, i.e. from SAD_P17_con6.nii it takes whats before 'con' up to the character before the last ('_')
-        # therefore sid would now be 'SAD_P17'
-        sid = name.split('con')[0][:-1]
-        # sidx is the row# of the sid in our pdata variable
-        sidx = np.nonzero(pdata.subject == sid)[0][0]
+    for sidx, con_file in enumerate(confiles):
         # add subject files to lists
         if pdata.classtype[sidx] == 2:
             # add .nii file
             classtype2.append(con_file)
             # add subject id
-            group2.append(sid)
+            group2.append(sidx)
             # add lsas_delta score for the subject
-            covariates_group2[0].append(pdata.lsas_pre[sidx]-pdata.lsas_post[sidx])
+            covariates_group2[0].append(y[sidx])
             # and at the same time fill up the matrix of the other group with zeros from the beginning
             covariates_group3[0].insert(0,0)
             # do the same for lsas_pre scores
@@ -72,9 +53,9 @@ def do_spm(analdir, confiles):
             # add .nii file
             classtype3.append(con_file)
             # add subject id
-            group3.append(sid)
+            group3.append(sidx)
             # add lsas_delta and lsas_pre to group3's covariates
-            covariates_group3[0].append(pdata.lsas_pre[sidx]-pdata.lsas_post[sidx])
+            covariates_group3[0].append(y[sidx])
             covariates_group3[1].append(pdata.lsas_pre[sidx])
             
     # fill up the rest of group2's covariates with zeros 
@@ -88,7 +69,7 @@ def do_spm(analdir, confiles):
 
     # TWO SAMPLE T-TEST
 
-    ttester = pe.Node(interface = spm.TwoSampleTTestDesign(), name = 'ttest')
+    ttester = pe.Node(interface = spm.TwoSampleTTestDesign(), name = 'ttestdes')
 
     # group1: classtype 2, group2: classtype 3
     ttester.inputs.group1_files = classtype2
@@ -100,7 +81,7 @@ def do_spm(analdir, confiles):
 
     # ESTIMATE MODEL
 
-    estimator = pe.Node(interface = spm.EstimateModel(), name = 'est')
+    estimator = pe.Node(interface = spm.EstimateModel(), name = 'ttestest')
     estimator.inputs.estimation_method = {'Classical':1}
 
     # ESTIMATE CONTRAST
@@ -113,29 +94,36 @@ def do_spm(analdir, confiles):
     con3 = ('Group2LSAS_delta>Group3LSAS_delta','T',['Group2LSAS_delta','Group3LSAS_delta'],[1,-1])
     con4 = ('Group2LSAS_delta<Group3LSAS_delta','T',['Group2LSAS_delta','Group3LSAS_delta'],[-1,1])
     con5 = ('LSAS Delta Response','T',['Group2LSAS_delta','Group3LSAS_delta'],[.5,.5])
+    con5 = ('LSAS Delta Response','T',['Group2LSAS_delta','Group3LSAS_delta'],[.5,.5])
     conest.inputs.contrasts = [con5]
 
 
     # THRESHOLD
     thresh = pe.Node(interface = spm.Threshold(), name = 'thresh')
-    thresh.inputs.contrast_index = 1 #5
-    thresh.inputs.height_threshold = 0.01
+    thresh.inputs.contrast_index = 1
+    thresh.inputs.height_threshold = 0.001
     thresh.inputs.use_fwe_correction = False
     thresh.inputs.use_topo_fdr = True
     thresh.inputs.extent_fdr_p_threshold = 0.05
 
     # WORKFLOW
-    analpath, analname = os.path.split(analdir)
+    if analname is None:
+        analname = 'some_name'
+
     workflow = pe.Workflow(name = analname)
-    workflow.base_dir = analpath
     workflow.connect(ttester,'spm_mat_file',estimator,'spm_mat_file')
     workflow.connect(estimator,'spm_mat_file',conest,'spm_mat_file')
     workflow.connect(estimator,'residual_image',conest,'residual_image')
     workflow.connect(estimator,'beta_images',conest,'beta_images')
     workflow.connect(conest,'spm_mat_file',thresh,'spm_mat_file')
     workflow.connect(conest,'spmT_images',thresh,'stat_image')
-    workflow.write_graph()
-    workflow.run()
+    if run_workflow:
+        if analdir is None:
+            analdir = mkdtemp()
+        workflow.base_dir = analdir
+        workflow.write_graph()
+        workflow.run()
+    return workflow
 
     # DONE WITH SPM <3
     
