@@ -48,7 +48,7 @@ def determine_model_all(X, y, behvars=2):
                                            X[:, features],
                                            y.ravel(),
                                            metrics.mean_square_error,
-                                           cv.KFold(n_samples, n_samples)))
+                                           cv.KFold(n_samples, 5)))
             if error < min_error:
                 min_error = error
                 best_features = features

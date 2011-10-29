@@ -4,9 +4,9 @@ import time
 
 # prevent lengthy SPM output
 from nipype.utils.logger import logging, logger, fmlogger, iflogger
-#logger.setLevel(logging.getLevelName('CRITICAL'))
-#fmlogger.setLevel(logging.getLevelName('CRITICAL'))
-#iflogger.setLevel(logging.getLevelName('CRITICAL'))
+logger.setLevel(logging.getLevelName('CRITICAL'))
+fmlogger.setLevel(logging.getLevelName('CRITICAL'))
+iflogger.setLevel(logging.getLevelName('CRITICAL'))
 
 import numpy as np
 from sklearn.linear_model.base import BaseEstimator, RegressorMixin
@@ -28,11 +28,11 @@ from cluster_tools import get_labels, get_clustermeans
 from cfutils import get_subjects, get_subject_data
 
 ## INITIAL SETUP
-outdir = '/mindhive/scratch/satra/better/figures_scatterpreds_skl'
+outdir = os.path.join(os.getcwd(),'figures_scatterpreds_skl')
 if not os.path.isdir(outdir):
     os.makedirs(outdir)
     
-tempspmdir = '/mindhive/scratch/satra/tempspm'
+tempspmdir = '/mindhive/gablab/satra/tempspm'
 if os.path.isdir(tempspmdir):
     shutil.rmtree(tempspmdir)
 os.makedirs(tempspmdir)
@@ -54,11 +54,16 @@ def setup_spm(subjects, y):
     """
 
     metawf = pe.Workflow(name='fitloo')
+    np.random.seed(int(time.time()*100000))
     metawf.base_dir = os.path.join(tempspmdir, '%f_%d' % (time.time(),
                                                           np.random.randint(10000)))
-    for trainidx, testidx in cv.LeaveOneOut(len(subjects)):
+    count = 0
+    _, pdata = get_subject_data(subjects)
+    max_folds = np.min(np.histogram(pdata.classtype, bins=2)[0])
+    for trainidx, testidx in cv.StratifiedKFold(pdata.classtype, max_folds):
         # workflow
-        analname='anal%02d' % np.nonzero(testidx)[0]
+        count += 1
+        analname='anal%02d' % count
         wf = do_spm(subjects[trainidx], y[trainidx],
                     analname=analname,
                     run_workflow=False)
@@ -81,7 +86,7 @@ def _fit(X, y, behav_data=None):
     # get labels & clustermeans
     labels, nlabels = get_labels(analdir)
     # delete all the workflow directories again
-    shutil.rmtree(analdir)
+    shutil.rmtree(os.path.realpath(os.path.join(analdir, '..')))
     clustermeans = get_clustermeans(X, labels, nlabels)
     print "finding model"
     # make new design matrix (first behvars, then clustermeans)
@@ -152,16 +157,17 @@ if __name__ == "__main__":
     n_subjects, = X.shape
     """
     result = []
-    for train, test in cv.KFold(n_subjects, n_subjects):
+    for train, test in cv.StratifiedKFold(pdata.classtype, 18):
         model = BrainReg().fit(X[train], y[train])
         result.append((y[test], model.predict(X[test])))
     """
     value, distribution, pvalue = cv.permutation_test_score(BrainReg(), X, y,
                                                             skm.mean_square_error,
-                                                            cv=cv.KFold(n_subjects,
-                                                                        n_subjects),
-                                                            n_permutations=1,
-                                                            n_jobs=2)
+                                                            cv=cv.StratifiedKFold(
+                                                                pdata.classtype,
+                                                                18),
+                                                            n_permutations=100,
+                                                            n_jobs=4)
  
     print distribution
     print value
@@ -172,6 +178,5 @@ if __name__ == "__main__":
     plt.title('p = %.3f' % pvalue)
     plt.savefig(os.path.join(outdir,"permtest_hist.png"),dpi=100,format="png")
     #model, varidx, labels, nlabels = _fit(X, y, pdata.lsas_pre[:,None])
-
 
     
