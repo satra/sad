@@ -4,9 +4,9 @@ import time
 
 # prevent lengthy SPM output
 from nipype.utils.logger import logging, logger, fmlogger, iflogger
-logger.setLevel(logging.getLevelName('CRITICAL'))
-fmlogger.setLevel(logging.getLevelName('CRITICAL'))
-iflogger.setLevel(logging.getLevelName('CRITICAL'))
+logger.setLevel(logging.getLevelName('INFO'))
+#fmlogger.setLevel(logging.getLevelName('CRITICAL'))
+#iflogger.setLevel(logging.getLevelName('CRITICAL'))
 
 import numpy as np
 from sklearn.linear_model.base import BaseEstimator, RegressorMixin
@@ -60,6 +60,7 @@ def setup_spm(subjects, y):
     count = 0
     _, pdata = get_subject_data(subjects)
     max_folds = np.min(np.histogram(pdata.classtype, bins=2)[0])
+    #print subjects, pdata.classtype, max_folds
     for trainidx, testidx in cv.StratifiedKFold(pdata.classtype, max_folds):
         # workflow
         count += 1
@@ -68,6 +69,7 @@ def setup_spm(subjects, y):
                     analname=analname,
                     run_workflow=False)
         metawf.add_nodes([wf])
+    print count
     print metawf._graph.nodes()
     metawf.run(plugin='PBS', plugin_args={'qsub_args': '-o /dev/null -e /dev/null',
                                           'max_tries': 5,
@@ -86,7 +88,7 @@ def _fit(X, y, behav_data=None):
     # get labels & clustermeans
     labels, nlabels = get_labels(analdir)
     # delete all the workflow directories again
-    shutil.rmtree(os.path.realpath(os.path.join(analdir, '..')))
+    #shutil.rmtree(os.path.realpath(os.path.join(analdir, '..')))
     clustermeans = get_clustermeans(X, labels, nlabels)
     print "finding model"
     # make new design matrix (first behvars, then clustermeans)
@@ -155,7 +157,7 @@ if __name__ == "__main__":
     X = pdata.subject
     y = pdata.lsas_pre - pdata.lsas_post
     n_subjects, = X.shape
-    """
+
     result = []
     for train, test in cv.StratifiedKFold(pdata.classtype, 18):
         model = BrainReg().fit(X[train], y[train])
@@ -178,5 +180,5 @@ if __name__ == "__main__":
     plt.title('p = %.3f' % pvalue)
     plt.savefig(os.path.join(outdir,"permtest_hist.png"),dpi=100,format="png")
     #model, varidx, labels, nlabels = _fit(X, y, pdata.lsas_pre[:,None])
-
+    """
     

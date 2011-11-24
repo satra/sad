@@ -24,7 +24,8 @@ def get_labels(analdir):
     nlabels: number of clusters/labels: max(labels)
     """
     confiles = glob(os.path.join(analdir, '*', 'thresh', 'spmT_0001_thr.img'))
-    conjunc = np.zeros(nib.load(confiles[0]).get_data().shape)
+    img = nib.load(confiles[0])
+    conjunc = np.zeros(img.get_data().shape)
 
     for fname in confiles:
         #print fname
@@ -34,7 +35,10 @@ def get_labels(analdir):
         # get clusters
         conjunc += (data>0).astype(np.int)
     # label the remaining clusters
-    return label(conjunc==len(confiles))
+    labels, nlabels =  label(conjunc==len(confiles))
+    nib.Nifti1Image(labels, None, header=img.get_header()).to_filename(os.path.join(analdir,
+                                                                              'label.nii.gz'))
+    return labels, nlabels
 
 def get_clustermeans(X, labels, nlabels):
     """
