@@ -158,10 +158,12 @@ if __name__ == "__main__":
     y = pdata.lsas_pre - pdata.lsas_post
     n_subjects, = X.shape
 
+    """
     result = []
     for train, test in cv.StratifiedKFold(pdata.classtype, 18):
         model = BrainReg().fit(X[train], y[train])
         result.append((y[test], model.predict(X[test])))
+    """
     """
     value, distribution, pvalue = cv.permutation_test_score(BrainReg(), X, y,
                                                             skm.mean_square_error,

@@ -75,7 +75,7 @@ def do_spm(subjects, y, analdir=None, analname=None, run_workflow=True):
     ttester.inputs.group1_files = classtype2
     ttester.inputs.group2_files = classtype3
     ttester.inputs.covariates = [dict(vector=covariates_group2[0], name='Group2LSAS_delta'),
-                                 dict(vector=covariates_group3[0], name='Group3LSAS_delta'), 
+                                 dict(vector=covariates_group3[0], name='Group3LSAS_delta'),
                                  dict(vector=covariates_group2[1], name='Group2LSAS_pre'),
                                  dict(vector=covariates_group3[1], name='Group3LSAS_pre')]
 
