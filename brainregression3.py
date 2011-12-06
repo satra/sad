@@ -4,9 +4,9 @@ import time
 
 # prevent lengthy SPM output
 from nipype.utils.logger import logging, logger, fmlogger, iflogger
-logger.setLevel(logging.getLevelName('INFO'))
-#fmlogger.setLevel(logging.getLevelName('CRITICAL'))
-#iflogger.setLevel(logging.getLevelName('CRITICAL'))
+logger.setLevel(logging.getLevelName('CRITICAL'))
+fmlogger.setLevel(logging.getLevelName('CRITICAL'))
+iflogger.setLevel(logging.getLevelName('CRITICAL'))
 
 import numpy as np
 from sklearn.linear_model.base import BaseEstimator, RegressorMixin
@@ -32,7 +32,7 @@ outdir = os.path.join(os.getcwd(),'figures_scatterpreds_skl')
 if not os.path.isdir(outdir):
     os.makedirs(outdir)
     
-tempspmdir = '/mindhive/gablab/satra/tempspm'
+tempspmdir = '/mindhive/scratch/satra/tempspm'
 if os.path.isdir(tempspmdir):
     shutil.rmtree(tempspmdir)
 os.makedirs(tempspmdir)
@@ -69,12 +69,13 @@ def setup_spm(subjects, y):
                     analname=analname,
                     run_workflow=False)
         metawf.add_nodes([wf])
-    print count
-    print metawf._graph.nodes()
+    #print count
+    #print metawf._graph.nodes()
     metawf.run(plugin='PBS', plugin_args={'qsub_args': '-o /dev/null -e /dev/null',
                                           'max_tries': 5,
                                           'retry_timeout': 1})
-    #metawf.run(plugin='MultiProc', plugin_args={'n_procs': 24})
+    metawf.run(plugin='MultiProc', plugin_args={'n_procs': 24})
+    #metawf.run()
     return os.path.join(metawf.base_dir, metawf.name)
 
 def _fit(X, y, behav_data=None):
@@ -88,9 +89,9 @@ def _fit(X, y, behav_data=None):
     # get labels & clustermeans
     labels, nlabels = get_labels(analdir)
     # delete all the workflow directories again
-    #shutil.rmtree(os.path.realpath(os.path.join(analdir, '..')))
+    shutil.rmtree(os.path.realpath(os.path.join(analdir, '..')))
     clustermeans = get_clustermeans(X, labels, nlabels)
-    print "finding model"
+    #print "finding model"
     # make new design matrix (first behvars, then clustermeans)
     if behav_data is not None:
         X_new = np.hstack((behav_data, clustermeans))
@@ -164,14 +165,14 @@ if __name__ == "__main__":
         model = BrainReg().fit(X[train], y[train])
         result.append((y[test], model.predict(X[test])))
     """
-    """
+
     value, distribution, pvalue = cv.permutation_test_score(BrainReg(), X, y,
                                                             skm.mean_square_error,
                                                             cv=cv.StratifiedKFold(
                                                                 pdata.classtype,
                                                                 18),
-                                                            n_permutations=100,
-                                                            n_jobs=4)
+                                                            n_permutations=1000,
+                                                            n_jobs=1)
  
     print distribution
     print value
@@ -182,5 +183,5 @@ if __name__ == "__main__":
     plt.title('p = %.3f' % pvalue)
     plt.savefig(os.path.join(outdir,"permtest_hist.png"),dpi=100,format="png")
     #model, varidx, labels, nlabels = _fit(X, y, pdata.lsas_pre[:,None])
-    """
+
     
