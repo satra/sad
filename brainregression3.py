@@ -32,7 +32,7 @@ outdir = os.path.join(os.getcwd(),'figures_scatterpreds_skl')
 if not os.path.isdir(outdir):
     os.makedirs(outdir)
     
-tempspmdir = '/mindhive/scratch/satra/tempspm'
+tempspmdir = '/mindhive/gablab/satra/tempspm'
 if os.path.isdir(tempspmdir):
     shutil.rmtree(tempspmdir)
 os.makedirs(tempspmdir)
@@ -74,7 +74,7 @@ def setup_spm(subjects, y):
     metawf.run(plugin='PBS', plugin_args={'qsub_args': '-o /dev/null -e /dev/null',
                                           'max_tries': 5,
                                           'retry_timeout': 1})
-    metawf.run(plugin='MultiProc', plugin_args={'n_procs': 24})
+    #metawf.run(plugin='MultiProc', plugin_args={'n_procs': 24})
     #metawf.run()
     return os.path.join(metawf.base_dir, metawf.name)
 
@@ -171,8 +171,8 @@ if __name__ == "__main__":
                                                             cv=cv.StratifiedKFold(
                                                                 pdata.classtype,
                                                                 18),
-                                                            n_permutations=1000,
-                                                            n_jobs=1)
+                                                            n_permutations=200,
+                                                            n_jobs=4)
  
     print distribution
     print value
