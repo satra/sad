@@ -1,45 +1,44 @@
-import sys
 import os
 import shutil
+import time
+
+# prevent lengthy SPM output
+from nipype.utils.logger import logging, logger, fmlogger, iflogger
+logger.setLevel(logging.getLevelName('CRITICAL'))
+fmlogger.setLevel(logging.getLevelName('CRITICAL'))
+iflogger.setLevel(logging.getLevelName('CRITICAL'))
+
 import numpy as np
-from glob import glob
 from sklearn.linear_model.base import BaseEstimator, RegressorMixin
-import sklearn.linear_model as lm
 import sklearn.metrics as skm
 import sklearn.cross_validation as cv
-
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+
+#from nipype.utils.config import config
+#config.enable_debug_mode()
+
+import nipype.pipeline.engine as pe
+
 from spm_2lvl import do_spm         #spm workflow --> give directory + confiles
 from feature_selection import determine_model_all
 from cluster_tools import get_labels, get_clustermeans
+from cfutils import get_subjects, get_subject_data
 
 ## INITIAL SETUP
-outdir = '/mindhive/gablab/u/keshavan/Sad/testmodels/'
+outdir = os.path.join(os.getcwd(),'figures_scatterpreds_skl')
 if not os.path.isdir(outdir):
-    os.mkdir(outdir)
+    os.makedirs(outdir)
     
-# in this folder are all sym links to con files
-spmdir = '/mindhive/scratch/fhorn/model_spminp_l2o/con1'
-if not os.path.isdir(spmdir):
-    sys.exit("please run the clustersmodel_l2ocrossval.py script first to generate the necessary input files")
-# here the spm files created for getting the clustermask are temporarily saved 
-tempspmdir = '/mindhive/scratch/keshavan/tempspm'
-if not os.path.isdir(tempspmdir):
-    os.mkdir(tempspmdir)
-    
-confiles = sorted(glob(os.path.join(spmdir,'*_con1.nii')))
+tempspmdir = '/mindhive/gablab/satra/tempspm'
+if os.path.isdir(tempspmdir):
+    shutil.rmtree(tempspmdir)
+os.makedirs(tempspmdir)
 
-# original input file with test scores etc for every subject + all amygdala activations
-pdata = np.recfromcsv('/mindhive/gablab/sad/PY_STUDY_DIR/Block/volsurf/l2output/social/split_halves/regression/lsasDELTA/6mm/allsubs.csv',names=True)
-# put here either lsas_delta or lsas_post
-responsevar = pdata.lsas_pre - pdata.lsas_post
-subject_num = len(pdata.subject)
-behvars = 2 # don't forget to update this when changeing the vars
 
-def setup_spm(subjects, select_conf):
+def setup_spm(subjects, y):
     """
     runs the SPM analysis workflow within a LOO crossvalidation
     
@@ -53,15 +52,54 @@ def setup_spm(subjects, select_conf):
     --------
     analdirs: the list of paths to the directories where the SPM output is saved
     """
-    analdirs = []
-    for trainidx, testidx in cv.LeaveOneOut(len(subjects)):
-        trainconfiles = np.array(select_conf)[trainidx]
-        leftout = subjects[testidx][0]
-        analdir = os.path.join(tempspmdir,"anal%02d_%s"%(leftout, np.random.randint(100000)))
+
+    metawf = pe.Workflow(name='fitloo')
+    np.random.seed(int(time.time()*100000))
+    metawf.base_dir = os.path.join(tempspmdir, '%f_%d' % (time.time(),
+                                                          np.random.randint(10000)))
+    count = 0
+    _, pdata = get_subject_data(subjects)
+    max_folds = np.min(np.histogram(pdata.classtype, bins=2)[0])
+    #print subjects, pdata.classtype, max_folds
+    for trainidx, testidx in cv.StratifiedKFold(pdata.classtype, max_folds):
         # workflow
-        do_spm(analdir, trainconfiles)
-        analdirs.append(os.path.join(analdir,'thresh'))
-    return analdirs
+        count += 1
+        analname='anal%02d' % count
+        wf = do_spm(subjects[trainidx], y[trainidx],
+                    analname=analname,
+                    run_workflow=False)
+        metawf.add_nodes([wf])
+    #print count
+    #print metawf._graph.nodes()
+    metawf.run(plugin='PBS', plugin_args={'qsub_args': '-o /dev/null -e /dev/null',
+                                          'max_tries': 5,
+                                          'retry_timeout': 1})
+    #metawf.run(plugin='MultiProc', plugin_args={'n_procs': 24})
+    #metawf.run()
+    return os.path.join(metawf.base_dir, metawf.name)
+
+def _fit(X, y, behav_data=None):
+    # run the SPM analysis (external workflow) in a LOO crossval
+    # and save the directories in which the threshold images are located
+    print "Fitting"
+    print X
+    print y
+    print "doing spm cv"
+    analdir = setup_spm(X, y)
+    # get labels & clustermeans
+    labels, nlabels = get_labels(analdir)
+    # delete all the workflow directories again
+    shutil.rmtree(os.path.realpath(os.path.join(analdir, '..')))
+    clustermeans = get_clustermeans(X, labels, nlabels)
+    #print "finding model"
+    # make new design matrix (first behvars, then clustermeans)
+    if behav_data is not None:
+        X_new = np.hstack((behav_data, clustermeans))
+        varidx, model = determine_model_all(X_new, y, behav_data.shape[1])
+    else:
+        X_new = clustermeans
+        varidx, model = determine_model_all(X_new, y, 0)
+    return model, varidx, labels, nlabels
 
 
 class BrainReg(BaseEstimator, RegressorMixin):
@@ -82,25 +120,15 @@ class BrainReg(BaseEstimator, RegressorMixin):
             
         y:  target scores for each subject
         """
-        # get the confiles of the given subjects
-        select_conf = [confiles[i] for i in X[:,0]]
-        # run the SPM analysis (external workflow) in a LOO crossval
-        # and save the directories in which the threshold images are located
-        analdirs = setup_spm(X[:,0], select_conf)
-        # get labels & clustermeans
-        labels, nlabels = get_labels(analdirs)
-        # delete all the workflow directories again
-        [shutil.rmtree(os.path.dirname(analdir)) for analdir in analdirs]
+
+        _, pdata = get_subject_data(X)
+        features = np.hstack((pdata.lsas_pre[:, None],
+                              pdata.classtype[:, None] - 2))
+        model, varidx, labels, nlabels = _fit(X, y, features)
         self.labels_ = labels
         self.nlabels_ = nlabels
-        clustermeans = get_clustermeans(labels, nlabels, select_conf)
-        # make new design matrix (first behvars, then clustermeans)
-        X_new = np.hstack((X[:,1:], clustermeans))
-        print X_new
-        varidx, model = determine_model_all(X_new, y, behvars) 
         self.model_ = model
-        self.varidx = varidx
-        print model.coef_
+        self.varidx_ = varidx
         return self
         
     def predict(self,X):
@@ -113,37 +141,38 @@ class BrainReg(BaseEstimator, RegressorMixin):
         """
         if self.model_ is not None:
             # get the confiles + clustermeans of the given subjects
-            select_conf = [confiles[i] for i in X[:,0]]
-            clustermeans = get_clustermeans(self.labels_, self.nlabels_, select_conf)
+            clustermeans = get_clustermeans(X, self.labels_, self.nlabels_)
+            _, pdata = get_subject_data(X)
+            features = np.hstack((pdata.lsas_pre[:, None],
+                                  pdata.classtype[:, None] - 2))
             # make new matrix (first behvars, then clustermeans)
-            X_new = np.hstack((X[:,1:], clustermeans))
-            print X_new
-            print X_new.shape
-            print self.model_.coef_
-            prediction = self.model_.predict(X_new[:,self.varidx])
+            X_new = np.hstack((features, clustermeans))
+            prediction = self.model_.predict(X_new[:,self.varidx_])
             return prediction
         else:
             raise Exception('no model')
-            
-if __name__ == "__main__":
-    X = np.array([range(subject_num),pdata.classtype-2,pdata.lsas_pre]).T
-    Y = responsevar
-    
 
-    pred = np.zeros(39)
-    
-    for test,train in cv.StratifiedKFold(pred,2):
-        BR = BrainReg()
-        BR.fit(X[train],Y[train])
-        pred[test] = BR.predict(X[test])
-        print "did one fold"
-    
-    
+if __name__ == "__main__":
+    X = get_subjects()
+    _, pdata = get_subject_data(X)
+    X = pdata.subject
+    y = pdata.lsas_pre - pdata.lsas_post
+    n_subjects, = X.shape
+
     """
-    value, distribution, pvalue = cv.permutation_test_score(BrainReg(), X, Y,
-                                                            skm.explained_variance_score,
-                                                            cv=cv.KFold(subject_num,subject_num),
-                                                            n_permutations=1, n_jobs=16)
+    result = []
+    for train, test in cv.StratifiedKFold(pdata.classtype, 18):
+        model = BrainReg().fit(X[train], y[train])
+        result.append((y[test], model.predict(X[test])))
+    """
+
+    value, distribution, pvalue = cv.permutation_test_score(BrainReg(), X, y,
+                                                            skm.mean_square_error,
+                                                            cv=cv.StratifiedKFold(
+                                                                pdata.classtype,
+                                                                18),
+                                                            n_permutations=200,
+                                                            n_jobs=4)
  
     print distribution
     print value
@@ -153,5 +182,6 @@ if __name__ == "__main__":
     plt.plot([value, value], [0, 50], color='r')
     plt.title('p = %.3f' % pvalue)
     plt.savefig(os.path.join(outdir,"permtest_hist.png"),dpi=100,format="png")
-    """
+    #model, varidx, labels, nlabels = _fit(X, y, pdata.lsas_pre[:,None])
+
     

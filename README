@@ -1,0 +1,8 @@
+Analysis code for predicting treatment outcome from social anxiety disorder
+===========================================================================
+
+This directory contains the preprocessing and first level SPM analysis scripts
+run using Nipype 0.3. The subsequent pattern analysis was performed with
+Nipype 0.4.1 and scikits-learn 0.10. The figure generation was done using
+IPython notebook.
+
